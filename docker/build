@@ -1,0 +1,29 @@
+#!/usr/bin/env sh
+set -eux
+
+readonly version=${1:?missing required <version> argument}
+
+pip install .
+
+if [ ! -f yamllint/__main__.py ]; then
+    cat <<'PYTHON' >yamllint/__main__.py
+from yamllint.cli import run
+
+if __name__ == '__main__':
+    run()
+PYTHON
+fi
+
+data=
+for conf in yamllint/conf/*.y*ml; do
+    data="${data} --add-data ${conf}:yamllint/conf"
+done
+
+# shellcheck disable=SC2086
+PYTHONHASHSEED=$(echo "${version}" | sed 's/\.//g') PYTHONOPTIMIZE=1 exec pyinstaller \
+    ${data} \
+    --clean \
+    --name yamllint \
+    --noconfirm \
+    --onefile \
+    yamllint/__main__.py

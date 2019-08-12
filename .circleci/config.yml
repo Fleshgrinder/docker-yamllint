@@ -1,0 +1,42 @@
+version: 2
+
+jobs:
+  scheduled-build:
+    docker:
+      - image: docker:stable-git
+    steps:
+      - run: apk add --no-cache bash coreutils
+      - checkout
+      - setup_remote_docker
+      - run: ./bin/build
+  build:
+    docker:
+      - image: docker:stable-git
+    steps:
+      - run: apk add --no-cache bash coreutils
+      - checkout
+      - setup_remote_docker
+      - run: ./bin/build --rebuild
+
+workflows:
+  version: 2
+  scheduled-build:
+    jobs:
+      - scheduled-build:
+          context: docker-hub
+          filters:
+            branches:
+              only: master
+    triggers:
+      - schedule:
+          cron: "0 0 * * *"
+          filters:
+            branches:
+              only: master
+  build:
+    jobs:
+      - build:
+          context: docker-hub
+          filters:
+            branches:
+              only: master
