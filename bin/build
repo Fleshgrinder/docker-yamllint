@@ -36,12 +36,20 @@ while (($# > 0)); do
 done
 readonly dry_run rebuild image
 
+# Silently executes the given command and executes it again with full output in
+# case it fails.
+function try() {
+    if ! "$@" &>/dev/null; then
+        "$@"
+    fi
+}
+
 # Executes the given command only if --dry-run was not requested.
 function dry() {
     if [[ ${dry_run} == true ]]; then
         echo "$*"
     else
-        "$@"
+        try "$@"
     fi
 }
 
@@ -53,10 +61,11 @@ cd docker
 # We clone the upstream repository once and reuse it throughout all builds
 # instead of checking it out as part of the build itself.
 if [[ -d yamllint ]]; then
-    git -C yamllint reset --hard origin/master
-    git -C yamllint pull
+    try git -C yamllint checkout master
+    try git -C yamllint reset --hard origin/master
+    try git -C yamllint pull
 else
-    git clone --quiet https://github.com/adrienverge/yamllint.git yamllint
+    try git clone https://github.com/adrienverge/yamllint.git yamllint
 fi
 
 # We get all tags and:
@@ -73,13 +82,13 @@ else
     # Check if the latest version is already present in the registry and stop
     # they sync if it is. We use the API for this to avoid synthetically
     # increasing the download counter of the image.
-    if curl "https://index.docker.io/v1/repositories/${image}/tags/${versions[0]}" &>/dev/null; then
+    if try curl "https://index.docker.io/v1/repositories/${image}/tags/${versions[0]}"; then
         echo "Latest version ${versions[0]} already exists, nothing to do here…"
         exit 0
     fi
 
     # We pull the latest image from the registry …
-    docker pull "${image}:latest" &>/dev/null
+    try docker pull "${image}:latest"
 
     # … so that we know what the latest version is …
     readonly latest_version="$(docker inspect --format '{{ index .Config.Labels "yamllint.version"}}' "${image}:latest")"
@@ -101,11 +110,11 @@ fi
 if [[ ${dry_run} == true ]]; then
     echo '--dry-run: not pushing anything' >&2
 else
-    docker login --password-stdin --username "${DOCKER_HUB_USERNAME}" <<<"${DOCKER_HUB_PASSWORD}"
+    try docker login --password-stdin --username "${DOCKER_HUB_USERNAME}" <<<"${DOCKER_HUB_PASSWORD}"
 fi
 
 # We collect all versions that we build and push to print them at the end.
-built_versions=()
+built_versions=(latest)
 
 # Arguments:
 #   1: version of the image that should be tagged
@@ -133,12 +142,12 @@ prev_minor=
 prev_major=
 for version in "${versions[@]}"; do
     # Switch the previously cloned repository to this particular version.
-    git -C yamllint -c advice.detachedHead=false checkout --quiet "v${version}"
+    try git -C yamllint -c advice.detachedHead=false checkout "v${version}"
 
     # Build this version …
     echo
     echo "+ ${image}:${version}"
-    docker build --build-arg "VERSION=${version}" --quiet --tag "${image}:${version}" .
+    try docker build --build-arg "VERSION=${version}" --tag "${image}:${version}" .
 
     # … verify that it actually works and that the versions match …
     [[ "$(docker run --rm "${image}:${version}" --version)" == "yamllint ${version}" ]]
@@ -162,7 +171,7 @@ for version in "${versions[@]}"; do
 done
 
 # The latest version becomes the latest image.
-docker-tag "${versions[0]}" latest
+try docker tag "${image}:${versions[0]}" "${image}:latest"
 
 # We push the images in reverse order to ensure proper sorting on Docker Hub.
 for ((i = ${#built_versions[@]} - 1; i >= 0; i--)); do
