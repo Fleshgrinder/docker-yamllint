@@ -5,7 +5,7 @@ jobs:
     docker:
       - image: docker:stable-git
     steps:
-      - run: apk add --no-cache bash coreutils curl
+      - run: apk add --no-cache --upgrade bash coreutils curl
       - checkout
       - setup_remote_docker
       - run: ./bin/build
