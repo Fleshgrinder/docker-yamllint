@@ -13,26 +13,28 @@ dry_run=false
 rebuild=false
 
 # Name of the image we are about to build.
-image=fleshgrinder/yamllint
+namespace=fleshgrinder
+repository=yamllint
+image=$namespace/$repository
 
 # Parse arguments …
 while (($# > 0)); do
-    case "$1" in
-    --dry-run)
-        dry_run=true
-        ;;
-    --image)
-        image=$2
-        shift
-        ;;
-    --rebuild)
-        rebuild=true
-        ;;
-    *)
-        echo "Unknown option $1" >&2
-        ;;
-    esac
+  case "$1" in
+  --dry-run)
+    dry_run=true
+    ;;
+  --image)
+    image=$2
     shift
+    ;;
+  --rebuild)
+    rebuild=true
+    ;;
+  *)
+    echo "Unknown option $1" >&2
+    ;;
+  esac
+  shift
 done
 readonly dry_run rebuild image
 
@@ -44,11 +46,11 @@ cd docker
 # We clone the upstream repository once and reuse it throughout all builds
 # instead of checking it out as part of the build itself.
 if [[ -d yamllint ]]; then
-    git -C yamllint checkout master
-    git -C yamllint reset --hard origin/master
-    git -C yamllint pull
+  git -C yamllint checkout master
+  git -C yamllint reset --hard origin/master
+  git -C yamllint pull
 else
-    git clone https://github.com/adrienverge/yamllint.git yamllint
+  git clone https://github.com/adrienverge/yamllint.git yamllint
 fi
 
 # We get all tags and:
@@ -56,44 +58,62 @@ fi
 # 1. strip the `v` prefix
 # 2. drop pre-releases
 # 3. sort them in reverse order
-mapfile -t versions < <(git -C yamllint tag --list | cut -c 2- | grep '^[^0]' | sort --reverse --version-sort)
+versions=$(git -C yamllint tag --list | cut -c 2- | grep '^[^0]' | sort --reverse --version-sort)
+mapfile -t versions <<<"$versions"
+
+if ((${#versions[@]} == 0)); then
+  echo 'Could not find any versions, this is impossible!' >&2
+  exit 1
+fi
 
 # Only guard the building if we are not asked to rebuild everything.
 if [[ $rebuild == true ]]; then
-    echo '--rebuild: skipping existing image check' >&2
+  echo '--rebuild: skipping existing image check' >&2
 else
-    # Check if the latest version is already present in the regisand stop
-    # they sync if it is. We use the API for this to avoid synthetically
-    # increasing the download counter of the image.
-    if curl -fgqsLS "https://index.docker.io/v1/repositories/$image/tags/${versions[0]}"; then
-        echo "Latest version ${versions[0]} already exists, nothing to do here…"
-        exit 0
+  # Check if the latest version is already present in the regisand stop
+  # they sync if it is. We use the API for this to avoid synthetically
+  # increasing the download counter of the image.
+  if curl \
+    --disable \
+    --fail \
+    --fail-early \
+    --false-start \
+    --globoff \
+    --head \
+    --http2-prior-knowledge \
+    --no-keepalive \
+    --proto =https \
+    --retry 5 \
+    --tlsv1.2 \
+    "https://hub.docker.com/v2/namespaces/$namespace/repositories/$repository/tags/${versions[0]}"; then
+    echo "Latest version ${versions[0]} already exists, nothing to do here…"
+    exit 0
+  fi
+
+  # We pull the latest image from the registry …
+  docker pull "$image:latest"
+
+  # … so that we know what the latest version is …
+  readonly latest_version="$(docker inspect --format '{{ index .Config.Labels "yamllint.version"}}' "$image:latest")"
+
+  # … with that knowledge we can drop all versions we already have in the
+  # registry and only build the new versions.
+  for i in "${!versions[@]}"; do
+    version=${versions[$i]}
+    # We compare the version with the latest version and sort them, if the
+    # version is above the latest version after sorting: it’s old.
+    if [[ "$(echo -e "$version\n$latest_version" | sort --version-sort | head -n1)" == "$version" ]]; then
+      unset 'versions[i]'
     fi
-
-    # We pull the latest image from the registry …
-    docker pull "$image:latest"
-
-    # … so that we know what the latest version is …
-    readonly latest_version="$(docker inspect --format '{{ index .Config.Labels "yamllint.version"}}' "$image:latest")"
-
-    # … with that knowledge we can drop all versions we already have in the
-    # registry and only build the new versions.
-    for i in "${!versions[@]}"; do
-        version=${versions[$i]}
-        # We compare the version with the latest version and sort them, if the
-        # version is above the latest version after sorting: it’s old.
-        if [[ "$(echo -e "$version\n$latest_version" | sort --version-sort | head -n1)" == "$version" ]]; then
-            unset 'versions[i]'
-        fi
-    done
+  done
 fi
 
 # Login so we can push the newly built images but only if we are actually going
 # to push something; which is not the case during a dry-run.
 if [[ $dry_run == true ]]; then
-    echo '--dry-run: not pushing anything' >&2
+  echo '--dry-run: not pushing anything' >&2
 else
-    docker login --password-stdin --username "$DOCKER_HUB_USERNAME" <<<"$DOCKER_HUB_PASSWORD"
+  docker login --password-stdin --username "$DOCKER_HUB_USERNAME" <<<"$DOCKER_HUB_PASSWORD"
 fi
 
 # We collect all versions that we build and push to print them at the end.
@@ -103,8 +123,8 @@ built_versions=(latest)
 #   1: version of the image that should be tagged
 #   2: version to tag
 function docker-tag() {
-    docker tag "$image:$1" "$image:$2"
-    built_versions+=("$2")
+  docker tag "$image:$1" "$image:$2"
+  built_versions+=("$2")
 }
 
 # We want to provide additional images without full versions that users can
@@ -124,33 +144,33 @@ function docker-tag() {
 prev_minor=
 prev_major=
 for version in "${versions[@]}"; do
-    # Switch the previously cloned repository to this particular version.
-    git -C yamllint -c advice.detachedHead=false checkout "v$version"
+  # Switch the previously cloned repository to this particular version.
+  git -C yamllint -c advice.detachedHead=false checkout "v$version"
 
-    # Build this version …
-    echo
-    echo "+ $image:$version"
-    docker build --build-arg "VERSION=$version" --tag "$image:$version" .
+  # Build this version …
+  echo
+  echo "+ $image:$version"
+  docker build --build-arg "VERSION=$version" --tag "$image:$version" .
 
-    # … verify that it actually works and that the versions match …
-    [[ "$(docker run --rm "$image:$version" --version)" == "yamllint $version" ]]
+  # … verify that it actually works and that the versions match …
+  [[ "$(docker run --rm "$image:$version" --version)" == "yamllint $version" ]]
 
-    # … and add it to the images that should be pushed.
-    built_versions+=("$version")
+  # … and add it to the images that should be pushed.
+  built_versions+=("$version")
 
-    # We extract the cur(rent) minor (1.0.0 => 1.0) and major (1.0 => 1) version
-    # from the version we just built and tag+push this image with either if we
-    # haven’t already done so.
-    #
-    # Note that this will tag+push the minor and major also if we are only
-    # building a single version since there is no previous minor or major. This
-    # is exactly the behavior we want to have and the nominal case.
-    cur_minor=${version%.*}
-    cur_major=${cur_minor%.*}
-    [[ "$prev_minor" == "$cur_minor" ]] || docker-tag "$version" "$cur_minor"
-    [[ "$prev_major" == "$cur_major" ]] || docker-tag "$version" "$cur_major"
-    prev_minor=$cur_minor
-    prev_major=$cur_major
+  # We extract the cur(rent) minor (1.0.0 => 1.0) and major (1.0 => 1) version
+  # from the version we just built and tag+push this image with either if we
+  # haven’t already done so.
+  #
+  # Note that this will tag+push the minor and major also if we are only
+  # building a single version since there is no previous minor or major. This
+  # is exactly the behavior we want to have and the nominal case.
+  cur_minor=${version%.*}
+  cur_major=${cur_minor%.*}
+  [[ "$prev_minor" == "$cur_minor" ]] || docker-tag "$version" "$cur_minor"
+  [[ "$prev_major" == "$cur_major" ]] || docker-tag "$version" "$cur_major"
+  prev_minor=$cur_minor
+  prev_major=$cur_major
 done
 
 # The latest version becomes the latest image.
@@ -158,12 +178,12 @@ docker tag "$image:${versions[0]}" "$image:latest"
 
 # We push the images in reverse order to ensure proper sorting on Docker Hub.
 for ((i = ${#built_versions[@]} - 1; i >= 0; i--)); do
-    ref="$image:${built_versions[$i]}"
-    if [[ $dry_run == true ]]; then
-        echo "--dry-run: not pushing $ref"
-    else
-        docker push "$ref"
-    fi
+  ref="$image:${built_versions[$i]}"
+  if [[ $dry_run == true ]]; then
+    echo "--dry-run: not pushing $ref"
+  else
+    docker push "$ref"
+  fi
 done
 
 echo

@@ -1,4 +1,12 @@
-# Docker yamllint
+<div align="center">
+  <h1>
+    <img src=".idea/icon.svg" height="64" alt="YAML Logo">
+    <br>
+    Docker YAMLlint
+  </h1>
+  <p><b>Minimal dockerized YAMLlint</b></p>
+</div>
+
 
 Alpine image with standalone [yamllint] executable. The executable is built with
 [six8/pyinstaller-alpine] for maximum performance and smallest possible size. No
